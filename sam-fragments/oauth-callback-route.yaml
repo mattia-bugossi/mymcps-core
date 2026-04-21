@@ -1,0 +1,32 @@
+# HttpApi routes for the provider-side OAuth flow handled by core's
+# auth/oauth-flow. /oauth/<provider>/login redirects to the provider's
+# authorize endpoint (buildAuthorizationUrl); /oauth/<provider>/callback
+# receives the authorization code and runs exchangeAuthorizationCode.
+# Both must bypass the bearer authorizer since the user's browser has no
+# MCP client token at this stage.
+
+# Replace <provider> with your provider slug in all three places below.
+
+# Merged into McpFunction.Properties.Events:
+Events:
+  OAuthProviderLogin:
+    Type: HttpApi
+    Properties:
+      ApiId: !Ref McpApi
+      Path: /oauth/<provider>/login
+      Method: GET
+      Auth:
+        Authorizer: NONE
+
+  OAuthProviderCallback:
+    Type: HttpApi
+    Properties:
+      ApiId: !Ref McpApi
+      Path: /oauth/<provider>/callback
+      Method: GET
+      Auth:
+        Authorizer: NONE
+
+# If you use the built-in authorizer, add these paths to its public-path list
+# in the Lambda env:
+#   PUBLIC_PATHS: /healthz,/.well-known/oauth-authorization-server,/oauth/authorize,/oauth/token,/oauth/<provider>/login,/oauth/<provider>/callback

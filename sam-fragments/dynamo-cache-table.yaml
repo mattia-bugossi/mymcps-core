@@ -1,0 +1,19 @@
+# DynamoDB on-demand table consumed by mymcps-core's DynamoCache.
+#
+# Usage: drop the Resource under your template's Resources:, then reference
+# CacheTable from the Lambda's env vars (DYNAMODB_TABLE_NAME) and IAM policy.
+
+Resources:
+  CacheTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: key
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
