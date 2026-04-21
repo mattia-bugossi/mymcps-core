@@ -1,0 +1,74 @@
+{
+  "name": "mymcps-core",
+  "version": "0.1.0",
+  "description": "Shared core for MyMCPs provider-specific MCP servers (Oura, Withings, …). Auth, transport, cache, AWS utilities.",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "sam-fragments"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./auth": {
+      "types": "./dist/auth/index.d.ts",
+      "import": "./dist/auth/index.js"
+    },
+    "./auth/signing": {
+      "types": "./dist/auth/signing.d.ts",
+      "import": "./dist/auth/signing.js"
+    },
+    "./transport": {
+      "types": "./dist/transport/index.d.ts",
+      "import": "./dist/transport/index.js"
+    },
+    "./cache": {
+      "types": "./dist/cache/index.d.ts",
+      "import": "./dist/cache/index.js"
+    },
+    "./aws": {
+      "types": "./dist/aws/index.d.ts",
+      "import": "./dist/aws/index.js"
+    },
+    "./tools": {
+      "types": "./dist/tools/index.d.ts",
+      "import": "./dist/tools/index.js"
+    },
+    "./errors": {
+      "types": "./dist/errors/index.d.ts",
+      "import": "./dist/errors/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "find tests -name '*.test.ts' -exec tsx --test {} +",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint 'src/**/*.ts'",
+    "format": "prettier --write 'src/**/*.ts' 'tests/**/*.ts'",
+    "prepack": "npm run build"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1032.0",
+    "@aws-sdk/client-secrets-manager": "^3.1032.0",
+    "@aws-sdk/lib-dynamodb": "^3.1032.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "jose": "^5.9.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@typescript-eslint/eslint-plugin": "^8.58.2",
+    "@typescript-eslint/parser": "^8.58.2",
+    "eslint": "^9.18.0",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
