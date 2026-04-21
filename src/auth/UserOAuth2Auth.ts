@@ -8,7 +8,7 @@ import { AuthError, UpstreamError } from '../errors/types.js';
 import type { ProviderAuth } from './ProviderAuth.js';
 import type { RefreshTokenRecord, RefreshTokenStore } from './RefreshTokenStore.js';
 
-export type TokenRequestShape = 'standard' | 'withings-action-param-signed';
+export type TokenRequestShape = 'standard' | 'withings-action-param';
 export type ResponseErrorConvention = 'http-status' | 'status-in-body';
 
 export interface UserOAuth2AuthConfig {
@@ -18,8 +18,10 @@ export interface UserOAuth2AuthConfig {
   clientSecret: string;
   // Fully-qualified token endpoint URL.
   tokenEndpoint: string;
-  // How the request body is shaped. 'withings-action-param-signed' adds the
-  // Withings-specific `action=requesttoken` form field to the body.
+  // How the request body is shaped. 'withings-action-param' adds the
+  // Withings-specific `action=requesttoken` form field to the body. No HMAC
+  // signature — Withings's /v2/oauth2 authenticates via client_secret in the
+  // body; signing applies only to /v2/signature/* and admin endpoints.
   tokenRequestShape: TokenRequestShape;
   // How to detect an auth failure on the response. OAuth 2.1 uses HTTP
   // status codes (401 on bad refresh token); Withings tunnels errors through
@@ -70,7 +72,7 @@ export function createUserOAuth2Auth(config: UserOAuth2AuthConfig): ProviderAuth
 
   function buildBody(refreshToken: string): URLSearchParams {
     const body = new URLSearchParams();
-    if (config.tokenRequestShape === 'withings-action-param-signed') {
+    if (config.tokenRequestShape === 'withings-action-param') {
       body.set('action', 'requesttoken');
     }
     body.set('grant_type', 'refresh_token');

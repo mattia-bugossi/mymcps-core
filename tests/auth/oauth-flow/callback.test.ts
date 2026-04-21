@@ -58,7 +58,7 @@ describe('exchangeAuthorizationCode', () => {
     assert.equal(puts[0].refreshToken, 'rt');
   });
 
-  it('withings-action-param-signed shape: includes action=requesttoken in body', async () => {
+  it('withings-action-param shape: includes action=requesttoken in body', async () => {
     const { store } = makeStore();
     let capturedBody = '';
     const fetchFn: typeof fetch = async (_url, init) => {
@@ -84,7 +84,7 @@ describe('exchangeAuthorizationCode', () => {
         clientSecret: 'csec',
         tokenEndpoint: 'https://wbsapi.withings.net/v2/oauth2',
         redirectUri: 'https://mcp/cb',
-        tokenRequestShape: 'withings-action-param-signed',
+        tokenRequestShape: 'withings-action-param',
         responseErrorConvention: 'status-in-body',
         refreshTokenStore: store,
         now: () => NOW,
@@ -112,7 +112,7 @@ describe('exchangeAuthorizationCode', () => {
             clientSecret: 'csec',
             tokenEndpoint: 'https://x/token',
             redirectUri: 'https://mcp/cb',
-            tokenRequestShape: 'withings-action-param-signed',
+            tokenRequestShape: 'withings-action-param',
             responseErrorConvention: 'status-in-body',
             refreshTokenStore: store,
             now: () => NOW,
@@ -138,7 +138,7 @@ describe('exchangeAuthorizationCode', () => {
             clientSecret: 'csec',
             tokenEndpoint: 'https://x/token',
             redirectUri: 'https://mcp/cb',
-            tokenRequestShape: 'withings-action-param-signed',
+            tokenRequestShape: 'withings-action-param',
             responseErrorConvention: 'status-in-body',
             refreshTokenStore: store,
             now: () => NOW,
