@@ -8,7 +8,7 @@ import { AuthError, UpstreamError } from '../errors/types.js';
 import type { ProviderAuth } from './ProviderAuth.js';
 import type { RefreshTokenRecord, RefreshTokenStore } from './RefreshTokenStore.js';
 
-export type TokenRequestShape = 'standard' | 'withings-action-param';
+export type TokenRequestShape = 'standard' | 'action-param';
 export type ResponseErrorConvention = 'http-status' | 'status-in-body';
 
 export interface UserOAuth2AuthConfig {
@@ -18,17 +18,20 @@ export interface UserOAuth2AuthConfig {
   clientSecret: string;
   // Fully-qualified token endpoint URL.
   tokenEndpoint: string;
-  // How the request body is shaped. 'withings-action-param' adds the
-  // Withings-specific `action=requesttoken` form field to the body. No HMAC
-  // signature — Withings's /v2/oauth2 authenticates via client_secret in the
-  // body; signing applies only to /v2/signature/* and admin endpoints.
+  // How the request body is shaped. 'action-param' adds an
+  // `action=requesttoken` form field to the body (e.g. Withings). No HMAC
+  // signature on the token endpoint — client_secret in the body is what
+  // authenticates the request; request signing (where applicable) is a
+  // separate concern on other endpoints.
   tokenRequestShape: TokenRequestShape;
   // How to detect an auth failure on the response. OAuth 2.1 uses HTTP
   // status codes (401 on bad refresh token); Withings tunnels errors through
   // the HTTP-200 body as a numeric `status` field.
   responseErrorConvention: ResponseErrorConvention;
   // Status values that mean "re-authorize required" for status-in-body mode.
-  // Defaults to [100,101,102,200,401] — Withings's auth-failure bucket.
+  // Defaults to [100,101,102,200,401] — a Withings-compatible default, which
+  // is the only current consumer of this convention. Providers that use the
+  // same convention with a different auth-failure bucket should override.
   authErrorStatusCodes?: number[];
   // Access token TTL fallback if the response omits expires_in.
   accessTokenTtlSec?: number;
@@ -72,7 +75,7 @@ export function createUserOAuth2Auth(config: UserOAuth2AuthConfig): ProviderAuth
 
   function buildBody(refreshToken: string): URLSearchParams {
     const body = new URLSearchParams();
-    if (config.tokenRequestShape === 'withings-action-param') {
+    if (config.tokenRequestShape === 'action-param') {
       body.set('action', 'requesttoken');
     }
     body.set('grant_type', 'refresh_token');

@@ -68,7 +68,7 @@ export async function exchangeAuthorizationCode(
   const authErrorCodes = new Set(config.authErrorStatusCodes ?? DEFAULT_AUTH_ERROR_STATUS_CODES);
 
   const body = new URLSearchParams();
-  if (config.tokenRequestShape === 'withings-action-param') {
+  if (config.tokenRequestShape === 'action-param') {
     body.set('action', 'requesttoken');
   }
   body.set('grant_type', 'authorization_code');
