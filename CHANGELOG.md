@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.0] – 2026-04-23
 
 ### Added
 - **`auth/mcp-client-auth`: RFC 7591 Dynamic Client Registration.** New
