@@ -62,3 +62,11 @@ npm run build
   directory is for.
 - **One logical change per commit** — same convention as the provider repos.
 - **No runtime deps on the provider repos.** Core must stay provider-agnostic.
+
+## Deployment notes
+
+- **`POST /register` is unauthenticated.** RFC 7591 §2 allows it, and claude.ai's connector
+  flow requires it. If you deploy a core `0.3.0`+ MCP behind API Gateway, configure
+  per-client-IP throttling on `POST /register` to mitigate the DoS surface — core does not
+  include rate-limiting. MCPs that don't enable DCR (no `ClientRegistry` wired) can leave the
+  route unmounted entirely.
