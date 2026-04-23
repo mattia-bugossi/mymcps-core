@@ -47,6 +47,19 @@ describe('buildDiscoveryMetadata', () => {
     assert.deepEqual(md.code_challenge_methods_supported, ['S256']);
     assert.deepEqual(md.scopes_supported, ['mcp']);
   });
+
+  it('defaults scopes_supported to ["mcp"] when omitted on the narrowed config', () => {
+    const md = buildDiscoveryMetadata({}, { issuer: 'https://x.example' });
+    assert.deepEqual(md.scopes_supported, ['mcp']);
+  });
+
+  it('advertises caller-provided scopes_supported verbatim when set', () => {
+    const md = buildDiscoveryMetadata(
+      { scopes_supported: ['mcp', 'mcp:read'] },
+      { issuer: 'https://x.example' },
+    );
+    assert.deepEqual(md.scopes_supported, ['mcp', 'mcp:read']);
+  });
 });
 
 describe('handleAuthorize', () => {

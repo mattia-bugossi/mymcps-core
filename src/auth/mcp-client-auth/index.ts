@@ -7,6 +7,7 @@ export {
   type AuthorizeInput,
   type ClientRegistration,
   type DiscoveryInput,
+  type DiscoveryMetadataConfig,
   type HttpResult,
   type OAuthServerConfig,
   type RegisterInput,

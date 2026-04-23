@@ -14,8 +14,9 @@
   (`${issuer}/register`).
 - **New exports** from `mymcps-core/auth`:
   `handleRegister`, `RegisterInput`, `ClientRegistration`,
-  `ClientRegistry`, `RegisteredClient`, `RegisteredClientMetadata`, and
-  the error class `ClientIdCollisionError`.
+  `ClientRegistry`, `RegisteredClient`, `RegisteredClientMetadata`, the
+  error class `ClientIdCollisionError`, and the narrowed
+  `DiscoveryMetadataConfig`.
 
 ### Changed (breaking)
 - **`handleAuthorize` and `handleToken` are now async.** Consumers
@@ -25,6 +26,24 @@
   functions.** MCPs that do not use DCR pass nothing and get identical
   static-pair behavior; existing Oura and Withings deployments upgrade
   to 0.3.0 without wiring a registry.
+- **`buildDiscoveryMetadata` now takes a narrowed `DiscoveryMetadataConfig`**
+  instead of the full `OAuthServerConfig`. The new type exposes only
+  RFC 8414-shaped fields and rejects unknown keys at compile time, so
+  consumers stop passing `''` placeholders for `clientId`, `clientSecret`,
+  `signingSecret` on the discovery path. Callers who pass an
+  `OAuthServerConfig`-typed variable keep compiling via structural
+  subtyping (the new field is optional); callers who pass inline object
+  literals with non-RFC-8414 keys must drop them.
+- **`OAuthServerConfig.defaultScope` (string) was previously reused by
+  `buildDiscoveryMetadata` to populate the advertised scopes. Discovery
+  now reads `DiscoveryMetadataConfig.scopes_supported` (string[], RFC 8414
+  plural-array naming) instead. `OAuthServerConfig.defaultScope` stays,
+  but its role is narrowed to the single-value fallback stamped on
+  issued auth codes / access tokens when the client omits `scope` at
+  /authorize or /token. Migration: consumers that previously relied on
+  `defaultScope` to drive the advertised scopes list should set
+  `scopes_supported: ['<scope>']` on the discovery call; everyone else
+  gets `['mcp']` by default and can no-op.
 
 ### Validated at registration
 - Only `token_endpoint_auth_method: "client_secret_post"` is accepted

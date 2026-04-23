@@ -29,7 +29,12 @@ export interface OAuthServerConfig {
   // any redirect_uri for the static client. Dynamically-registered
   // clients are validated against their own metadata.redirect_uris.
   allowedRedirectUris?: string[];
-  // Default scope when the client omits one. Defaults to 'mcp'.
+  // Scope claim stamped on issued auth codes / access tokens when the
+  // client omits `scope` at /authorize or /token. Single string (the
+  // scope claim is a single value per RFC 6749). Defaults to 'mcp'.
+  // Semantically separate from DiscoveryMetadataConfig.scopes_supported,
+  // which is the array advertised in discovery — typically defaultScope
+  // should be a member of scopes_supported, but this is unenforced.
   defaultScope?: string;
   // Subject claim for the issued tokens. Single-user servers hard-code this
   // ('single-user'); multi-user servers derive it during a prior login step
@@ -76,6 +81,20 @@ export interface TokenSuccess {
 
 export interface DiscoveryInput {
   issuer: string;
+}
+
+// RFC 8414-aligned: keys match the discovery-metadata response shape so
+// consumers don't have to carry OAuthServerConfig's authorize/token
+// fields on the discovery path. Unknown keys are rejected at compile
+// time. Expand this type as new advertised fields become configurable.
+export interface DiscoveryMetadataConfig {
+  // RFC 8414 `scopes_supported` — array of scope values the server
+  // advertises as accepted. Defaults to ['mcp']. Semantically separate
+  // from OAuthServerConfig.defaultScope (the single-value fallback
+  // stamped on issued tokens when the client omits scope) — typically
+  // defaultScope should be a member of scopes_supported, but this is
+  // unenforced.
+  scopes_supported?: string[];
 }
 
 // RFC 7591 §2 client metadata. All fields optional; `unknown` so we can
@@ -135,10 +154,10 @@ function isStringArray(v: unknown): v is string[] {
 }
 
 export function buildDiscoveryMetadata(
-  config: OAuthServerConfig,
+  config: DiscoveryMetadataConfig,
   { issuer }: DiscoveryInput,
 ): Record<string, unknown> {
-  const scope = config.defaultScope ?? DEFAULT_SCOPE;
+  const scopes_supported = config.scopes_supported ?? [DEFAULT_SCOPE];
   return {
     issuer,
     authorization_endpoint: `${issuer}/oauth/authorize`,
@@ -148,7 +167,7 @@ export function buildDiscoveryMetadata(
     grant_types_supported: ['authorization_code'],
     code_challenge_methods_supported: ['S256'],
     token_endpoint_auth_methods_supported: ['client_secret_post'],
-    scopes_supported: [scope],
+    scopes_supported,
   };
 }
 
