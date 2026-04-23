@@ -5,6 +5,7 @@ import {
   AuthError,
   NotFoundError,
   RateLimitError,
+  UpstreamAuthRevoked,
   UpstreamError,
   ValidationError,
 } from './types.js';
@@ -35,6 +36,13 @@ export interface ToJsonRpcOptions {
 export function classifyError(err: unknown): ErrorClassification {
   if (err instanceof ValidationError) {
     return { statusCode: 400, jsonRpcCode: -32602, message: 'Invalid parameters' };
+  }
+  if (err instanceof UpstreamAuthRevoked) {
+    return {
+      statusCode: 401,
+      jsonRpcCode: -32000,
+      message: `${err.provider} access revoked — re-authorization required`,
+    };
   }
   if (err instanceof AuthError) {
     return { statusCode: 401, jsonRpcCode: -32000, message: 'Authentication required' };

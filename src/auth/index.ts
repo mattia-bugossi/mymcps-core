@@ -19,5 +19,16 @@ export {
   type SecretsManagerRefreshTokenStoreConfig,
   type TokenSecretsClient,
 } from './SecretsManagerRefreshTokenStore.js';
+export {
+  createUserPreIssuedAuth,
+  type PreIssuedAuth,
+  type UserPreIssuedAuthConfig,
+} from './UserPreIssuedAuth.js';
+export {
+  ConcurrentModificationError,
+  createVersionedSecretsClient,
+  type VersionedSecret,
+  type VersionedSecretsClient,
+} from './VersionedSecretsClient.js';
 export * as mcpClientAuth from './mcp-client-auth/index.js';
 export * as oauthFlow from './oauth-flow/index.js';

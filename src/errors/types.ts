@@ -35,6 +35,22 @@ export class UpstreamError extends Error {
   }
 }
 
+// Thrown by UserPreIssuedAuth when the upstream auth domain rejects a
+// refresh call with a 4xx — the refresh token is no longer valid and
+// the user must re-authorize. Non-retryable by design: callers should
+// surface it as an auth error all the way to the MCP client rather
+// than catching and retrying.
+export class UpstreamAuthRevoked extends Error {
+  readonly provider: string;
+  readonly upstreamStatus?: number;
+  constructor(provider: string, message: string, upstreamStatus?: number) {
+    super(message);
+    this.name = 'UpstreamAuthRevoked';
+    this.provider = provider;
+    this.upstreamStatus = upstreamStatus;
+  }
+}
+
 export class NotFoundError extends Error {
   constructor(message = 'Not found') {
     super(message);

@@ -17,6 +17,34 @@
   `ClientRegistry`, `RegisteredClient`, `RegisteredClientMetadata`, the
   error class `ClientIdCollisionError`, and the narrowed
   `DiscoveryMetadataConfig`.
+- **`auth`: `UserPreIssuedAuth` — pre-issued-token upstream auth with
+  refresh rotation.** New pattern for upstream providers whose public
+  SPA client ships no `client_secret` (Peloton-style), where the token
+  pair must be seeded out-of-band into AWS Secrets Manager and refreshed
+  from the server on expiry. Coexists with `UserOAuth2Auth` (the
+  delegated-OAuth2 pattern used by Oura / Withings / Strava); the two
+  modules must not cross-import. `createUserPreIssuedAuth(config)`
+  returns `{ getAccessToken, fetch }` — `fetch` wraps upstream requests
+  with `Authorization: Bearer`, refreshes proactively when the cached
+  token is within `refreshMargin` seconds (default 60; pass 0 for
+  pure-reactive) of `expires_at`, and retries once on a reactive 401.
+- **`auth`: `VersionedSecretsClient` — versioned Secrets Manager client
+  with optimistic concurrency.** Powers `UserPreIssuedAuth`'s refresh
+  path. Atomic refresh via `PutSecretValue(AWSPENDING)` +
+  `UpdateSecretVersionStage` with `RemoveFromVersionId` —
+  `ConcurrentModificationError` on stale `VersionId`. Caller re-reads
+  the secret and uses the winning writer's new `access_token` rather
+  than triggering a second refresh (single-flight guarantee).
+- **`errors`: `UpstreamAuthRevoked` error class.** Non-retryable; raised
+  when the upstream refresh endpoint returns `4xx`, meaning the user's
+  grant has been revoked and re-authorization is required. Maps to HTTP
+  `401` / JSON-RPC `-32000` via `classifyError`, distinct from generic
+  `AuthError` (which signals a server-side auth misconfiguration).
+- **New exports** from `mymcps-core/auth`: `createUserPreIssuedAuth`,
+  `PreIssuedAuth`, `UserPreIssuedAuthConfig`,
+  `createVersionedSecretsClient`, `VersionedSecret`,
+  `VersionedSecretsClient`, `ConcurrentModificationError`. New export
+  from `mymcps-core/errors`: `UpstreamAuthRevoked`.
 
 ### Changed (breaking)
 - **`handleAuthorize` and `handleToken` are now async.** Consumers
