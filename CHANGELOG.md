@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.3.2] – 2026-05-08
+
+### Changed
+- **Refresh-token TTL is now sliding, anchored to last rotation rather
+  than family origin.** Each successful rotation extends the chain by
+  `refreshTokenTtlSeconds` (default 30 days) from `now()`. Active
+  chains never expire; idle chains still die after the TTL window
+  since the last rotation.
+
+  Closes the 30-day re-pair cliff in claude.ai for connectors that get
+  used at least once a month. The v0.3.1 anchor-to-origin behavior
+  forced a re-pair every 30 days regardless of activity — same shape
+  as the original "use it or lose it" cliff that motivated the
+  refresh-token grant in the first place.
+
+  Behavioral, non-breaking: the JWT format, DDB schema, and
+  `IssuedRefreshTokenStore` interface are all unchanged. The field
+  meaning of the `exp` row attribute shifts from "family-origin + 30d"
+  to "last-rotation + 30d," but the column itself is unchanged.
+
+  v0.3.1 in-flight chains heal on first rotation under v0.3.2: the
+  predecessor's origin-anchored `exp` is read for verify but the
+  successor's new `exp` is freshly computed from `now()`. No data
+  migration needed.
+
+### Renamed
+- **Constant `DEFAULT_FAMILY_TTL_SEC` → `DEFAULT_REFRESH_TOKEN_TTL_SEC`.**
+  Internal-only; not exported.
+- **`OAuthServerConfig.refreshTokenFamilyTtlSeconds` →
+  `refreshTokenTtlSeconds`.** Old name removed (not aliased).
+  Consumers overriding this field will hit a TypeScript compile
+  error pointing to the single rename site. The "family" framing is
+  no longer accurate — it's a per-token sliding window now.
+
 ## [0.3.1] – 2026-05-08
 
 ### Added
