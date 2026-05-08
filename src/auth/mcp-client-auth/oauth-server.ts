@@ -56,10 +56,12 @@ export interface OAuthServerConfig {
   // fallback for downstream MCPs that haven't migrated yet). Setting
   // this override wins regardless of store presence.
   accessTokenTtlSeconds?: number;
-  // Refresh-token family TTL in seconds (default 30 days). Anchored to
-  // family origin — rotations do NOT extend it. Persisted as the row's
-  // `exp` and stamped on the refresh JWT.
-  refreshTokenFamilyTtlSeconds?: number;
+  // Refresh-token TTL in seconds (default 30 days). **Sliding** —
+  // each rotation extends the chain by this amount from `now()`. Idle
+  // chains die after this window; chains used at least once per window
+  // never expire. Persisted as the row's `exp` and stamped on the
+  // refresh JWT.
+  refreshTokenTtlSeconds?: number;
   // Grace window in seconds for re-presenting a superseded refresh
   // token after a rotation (default 60). Inside the window returns the
   // SAME successor pair (idempotent retry); outside triggers reuse
@@ -161,7 +163,7 @@ export interface ClientRegistration {
 const DEFAULT_CODE_TTL = 60;
 const DEFAULT_ACCESS_TTL_WITH_REFRESH = 60 * 60;
 const DEFAULT_ACCESS_TTL_WITHOUT_REFRESH = 24 * 60 * 60;
-const DEFAULT_FAMILY_TTL_SEC = 30 * 24 * 60 * 60;
+const DEFAULT_REFRESH_TOKEN_TTL_SEC = 30 * 24 * 60 * 60;
 const DEFAULT_GRACE_WINDOW_SEC = 60;
 const REFRESH_AUDIENCE_SUFFIX = '-refresh';
 const DEFAULT_SCOPE = 'mcp';
@@ -412,14 +414,14 @@ async function handleAuthorizationCodeGrant(
   };
 
   if (refreshStore) {
-    const familyTtl = config.refreshTokenFamilyTtlSeconds ?? DEFAULT_FAMILY_TTL_SEC;
+    const refreshTtl = config.refreshTokenTtlSeconds ?? DEFAULT_REFRESH_TOKEN_TTL_SEC;
     const row: IssuedRefreshTokenRecord = {
       jti: randomUUID(),
       family_id: randomUUID(),
       client_id,
       scope,
       created_at: iat,
-      exp: iat + familyTtl,
+      exp: iat + refreshTtl,
     };
     await refreshStore.put(row);
     body.refresh_token = sign(buildRefreshClaims(row, sub, config.accessAudience), config.signingSecret);
@@ -503,14 +505,17 @@ async function handleRefreshTokenGrant(
 
   // Current valid refresh — rotate.
   const iat = now();
+  const refreshTtl = config.refreshTokenTtlSeconds ?? DEFAULT_REFRESH_TOKEN_TTL_SEC;
   const successor: IssuedRefreshTokenRecord = {
     jti: randomUUID(),
     family_id: row.family_id,
     client_id: row.client_id,
     scope,
     created_at: iat,
-    // Anchored to family origin: preserve predecessor's exp.
-    exp: row.exp,
+    // Sliding TTL: every rotation extends the chain from now(). Active
+    // chains never expire; idle chains die after refreshTokenTtlSeconds
+    // since the last rotation.
+    exp: iat + refreshTtl,
   };
   await refreshStore.rotate(row.jti, successor);
 

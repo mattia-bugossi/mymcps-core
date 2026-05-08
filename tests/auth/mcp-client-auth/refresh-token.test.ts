@@ -273,11 +273,154 @@ describe('refresh_token grant — happy-path rotation', () => {
     const oldRow = store.rows.get(initialClaims.jti as string)!;
     assert.equal(oldRow.superseded_by_jti, newClaims.jti);
 
-    // Successor row exists, same family, exp anchored to family origin (NOT extended).
+    // Successor row exists, same family, exp slides forward to T1 + 30d
+    // (sliding TTL — each rotation extends the chain from now()).
     const newRow = store.rows.get(newClaims.jti as string)!;
     assert.equal(newRow.family_id, oldRow.family_id);
     assert.equal(newRow.created_at, T1);
-    assert.equal(newRow.exp, NOW + THIRTY_DAYS, 'exp anchored to family origin, not extended');
+    assert.equal(newRow.exp, T1 + THIRTY_DAYS, 'exp slides forward on rotation');
+  });
+});
+
+describe('refresh_token grant — sliding TTL', () => {
+  it('rotation at T2 (> T1) yields row2.exp = T2 + 30d, distinct from row1.exp', async () => {
+    const store = mkStore();
+    const code = await issueCode(() => NOW);
+    const initial = await exchangeCode(code, () => NOW, store);
+
+    // Rotation 1 at T1.
+    const T1 = NOW + 1000;
+    const rotation1 = (await handleToken(
+      config,
+      {
+        grant_type: 'refresh_token',
+        refresh_token: initial.refresh_token!,
+        client_id: 'client-abc',
+        client_secret: 'shhh',
+      },
+      () => T1,
+      undefined,
+      store,
+    )).body as TokenSuccess;
+
+    const claims1 = verify(
+      rotation1.refresh_token!,
+      config.signingSecret,
+      'test-access-refresh',
+      T1,
+    );
+    const row1 = store.rows.get(claims1.jti as string)!;
+    assert.equal(row1.exp, T1 + THIRTY_DAYS);
+
+    // Rotation 2 at T2 (1 hour later), well within the active window.
+    const T2 = T1 + 3600;
+    const rotation2 = (await handleToken(
+      config,
+      {
+        grant_type: 'refresh_token',
+        refresh_token: rotation1.refresh_token!,
+        client_id: 'client-abc',
+        client_secret: 'shhh',
+      },
+      () => T2,
+      undefined,
+      store,
+    )).body as TokenSuccess;
+
+    const claims2 = verify(
+      rotation2.refresh_token!,
+      config.signingSecret,
+      'test-access-refresh',
+      T2,
+    );
+    const row2 = store.rows.get(claims2.jti as string)!;
+    assert.equal(row2.exp, T2 + THIRTY_DAYS, 'row2.exp slides to T2 + 30d');
+    assert.notEqual(row2.exp, row1.exp, 'row2.exp is NOT anchored to row1.exp');
+  });
+
+  it('actively-used chain spanning > 30d total stays valid: rotate every 5d for 50d', async () => {
+    const store = mkStore();
+    const code = await issueCode(() => NOW);
+    let current = await exchangeCode(code, () => NOW, store);
+
+    let lastT = NOW;
+    for (let i = 1; i <= 10; i++) {
+      const T = NOW + i * 5 * 24 * 60 * 60; // every 5 days
+      const result = await handleToken(
+        config,
+        {
+          grant_type: 'refresh_token',
+          refresh_token: current.refresh_token!,
+          client_id: 'client-abc',
+          client_secret: 'shhh',
+        },
+        () => T,
+        undefined,
+        store,
+      );
+      assert.equal(result.status, 200, `rotation ${i} at T+${5 * i}d should succeed`);
+      current = result.body as TokenSuccess;
+      lastT = T;
+    }
+
+    // After 50 days of active use, the final row's exp is the LAST
+    // rotation time + 30d — chain is still live, well past the original
+    // 30d cliff that v0.3.1 would have imposed.
+    const finalClaims = verify(
+      current.refresh_token!,
+      config.signingSecret,
+      'test-access-refresh',
+      lastT,
+    );
+    const finalRow = store.rows.get(finalClaims.jti as string)!;
+    assert.equal(finalRow.exp, lastT + THIRTY_DAYS);
+    assert.equal(lastT, NOW + 50 * 24 * 60 * 60);
+    // Sanity: original-anchor world would have had final exp = NOW + 30d,
+    // which is now in the past. We assert we're nowhere near that.
+    assert.ok(finalRow.exp > NOW + THIRTY_DAYS, 'chain extended past origin+30d');
+  });
+
+  it('idle past the sliding window: rotation at T1, no use until T1 + 30d + 1s → 400 invalid_grant', async () => {
+    const store = mkStore();
+    const code = await issueCode(() => NOW);
+    const initial = await exchangeCode(code, () => NOW, store);
+
+    const T1 = NOW + 1000;
+    const rotation = (await handleToken(
+      config,
+      {
+        grant_type: 'refresh_token',
+        refresh_token: initial.refresh_token!,
+        client_id: 'client-abc',
+        client_secret: 'shhh',
+      },
+      () => T1,
+      undefined,
+      store,
+    )).body as TokenSuccess;
+
+    // Idle from T1 through T1 + 30d + 1s — past the sliding window's
+    // boundary anchored to the LAST rotation. JWT exp claim is
+    // T1 + 30d, so verify rejects.
+    const T2 = T1 + THIRTY_DAYS + 1;
+    const result = await handleToken(
+      config,
+      {
+        grant_type: 'refresh_token',
+        refresh_token: rotation.refresh_token!,
+        client_id: 'client-abc',
+        client_secret: 'shhh',
+      },
+      () => T2,
+      undefined,
+      store,
+    );
+    assert.equal(result.status, 400);
+    assert.equal((result.body as { error: string }).error, 'invalid_grant');
+    assert.match(
+      (result.body as { error_description: string }).error_description,
+      /expired/,
+    );
   });
 });
 
