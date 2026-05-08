@@ -1,5 +1,115 @@
 # Changelog
 
+## [0.3.1] – 2026-05-08
+
+### Added
+- **`auth/mcp-client-auth`: refresh-token grant.** Standard OAuth 2.1
+  refresh-token flow with rotation, 60s grace window, and reuse-detection-driven
+  family revocation (RFC 6749 OAuth 2.1 §4.14). `handleToken` now accepts
+  `grant_type=refresh_token` (body field `refresh_token`); the initial
+  `authorization_code` response also returns a `refresh_token` alongside
+  `access_token` when a store is wired. Closes the daily re-pair cliff
+  in claude.ai. Discovery `grant_types_supported` advertises both grants
+  when `DiscoveryMetadataConfig.refresh_token_supported: true`.
+- **`auth/mcp-client-auth`: `IssuedRefreshTokenStore` interface.** New
+  consumer-implemented persistence contract for refresh tokens that the
+  MCP OAuth shell ISSUES to clients (claude.ai etc.) — distinct from
+  `RefreshTokenStore` (in `src/auth/`), which holds tokens we RECEIVE
+  from upstream providers under the OAuth2-delegation pattern. The
+  `Issued` prefix and co-location with `mcp-client-auth/` keep them
+  unconfusable. Storage backend is consumer-chosen — DynamoDB for prod,
+  in-memory for tests — same injection pattern as `ClientRegistry`.
+
+  **Rotation is atomic.** The store exposes `rotate(predecessorJti,
+  newRecord)`, which MUST commit the supersede-mark on the predecessor
+  AND the insert of the successor in one operation. Production
+  consumers implement this via DynamoDB `TransactWriteItems`; in-memory
+  test fakes do both writes synchronously. The atomic primitive closes
+  the parallel-chain exploit window where a non-atomic
+  put-then-mark-superseded sequence could let a leaked predecessor
+  mint a second descendant chain inside the failure gap. Future-you
+  grepping for "how does rotation handle network blips" should land
+  here.
+- **`errors`: `UpstreamAuthSeedError` error class.** Sibling to
+  `UpstreamAuthRevoked`, distinct for diagnostic clarity. Thrown by
+  `UserPreIssuedAuth` when the seeded Secrets Manager value's
+  `expires_at` is at-or-before now at load time — meaning the very
+  first call would force a refresh and risk burning the refresh token
+  if another process (e.g., the SPA still running in another tab) has
+  already rotated it. Maps via `classifyError` to HTTP `500` /
+  JSON-RPC `-32603` (operator-config error, NOT 401 like
+  `UpstreamAuthRevoked` — the user did nothing wrong; re-authorizing
+  wouldn't help).
+- **New exports** from `mymcps-core/auth`: `IssuedRefreshTokenRecord`,
+  `IssuedRefreshTokenStore` (under the `mcpClientAuth` namespace), plus
+  `UpstreamAuthSeedError` re-exported next to its `UserPreIssuedAuth`
+  thrower for discoverability. New export from `mymcps-core/errors`:
+  `UpstreamAuthSeedError`.
+
+### Changed
+- **MCP access-token TTL is now conditional on `refreshStore` presence.**
+  When `handleToken` is wired with an `IssuedRefreshTokenStore`, access
+  tokens default to **1h** (claude.ai refreshes natively via the new
+  grant). When the store is absent, access tokens stay at **24h** —
+  preserving v0.3.0 behavior for downstream MCPs that bump core but
+  haven't migrated to refresh tokens yet. `OAuthServerConfig.accessTokenTtlSeconds`
+  override still wins regardless of presence. **If you're debugging
+  "why is my MCP re-pairing every hour" after the bump:** it's because
+  you've wired `refreshStore` but your client doesn't implement the
+  `refresh_token` grant — either wire the grant client-side or unwire
+  the store to opt out of the new TTL.
+- **`UserPreIssuedAuth` re-reads the secret before every refresh attempt.**
+  Inside `doRefresh`, immediately before the upstream `/oauth/token`
+  POST, a fresh `secretsClient.get` runs and the just-read access_token
+  is compared to the in-memory cached one. If they differ, the upstream
+  refresh is skipped and the rotator's value is surfaced to the caller.
+  Closes the operator-rotates-via-`put-secret-value` cliff: warm Lambda
+  instances now pick up manual rotations on the next request, without
+  forcing a cold start. Single-flight `pendingRefresh` mutex semantics
+  unchanged; cross-Lambda CAS contract on the write path unchanged.
+- **`UserPreIssuedAuth` rejects `expires_at <= now` at secret-load time
+  with `UpstreamAuthSeedError`** (see Added). Refresh path is NOT
+  triggered when this error fires — abort before any network call,
+  rather than racing an external rotator and burning the seeded
+  refresh token. Only strict-past values rejected; `expires_at: now + 1`
+  is fine.
+
+### Storage
+- **`RefreshTokensTable` schema** (consumer-provisioned DynamoDB table,
+  one per MCP). Field names match `IssuedRefreshTokenRecord`:
+
+  | Attribute | Type | Notes |
+  | --- | --- | --- |
+  | `jti` | String | HASH key. JWT `jti` claim. |
+  | `family_id` | String | UUID assigned at initial code exchange, preserved through every rotation. GSI for `revokeFamily`. |
+  | `client_id` | String | Static-pair or DCR client_id. Refresh-token grant verifies the presented `client_id` matches. |
+  | `scope` | String | Single-value scope claim, copied verbatim from the originating authorization code. |
+  | `created_at` | Number | Epoch seconds when this row (this rotation) was issued. Used to measure the 60s grace window. |
+  | `exp` | Number | Epoch seconds when this row expires. **Anchored to family origin** (`family_origin_iat + familyTtl`) — rotations do NOT extend it. Set DDB TTL on this attribute for automatic cleanup. Matches the JWT's `exp` claim. |
+  | `superseded_by_jti` | String (optional) | Set on rotation. Presence + re-presentation of the row's own `jti` is the trigger for either grace-window idempotent re-issue or family revocation. |
+  | `revoked_at` | Number (optional) | Set when reuse detection (or any other revocation path) kills this row. Once set, all refresh attempts on this `jti` fail with 400 `invalid_grant`. |
+
+  Recommended indexes: HASH on `jti`; GSI on `family_id` (projection
+  `KEYS_ONLY`) for `revokeFamily`. DDB TTL: enable on `exp`. Family TTL
+  default is 30 days (`OAuthServerConfig.refreshTokenFamilyTtlSeconds`
+  override available); grace window default is 60 seconds
+  (`OAuthServerConfig.refreshTokenGraceWindowSeconds`).
+
+### Migration
+- **No-op for downstream MCPs that bump core without wiring `refreshStore`.**
+  Behavior is identical to v0.3.0 except the new
+  `UpstreamAuthSeedError` (which only fires on a malformed seed
+  anyway). Discovery still advertises only `authorization_code`;
+  refresh-token grant returns `400 unsupported_grant_type`.
+- **To enable refresh tokens for a downstream MCP:** (1) provision the
+  `RefreshTokensTable` schema above; (2) implement `IssuedRefreshTokenStore`
+  against it (the `rotate` method MUST use `TransactWriteItems`); (3)
+  pass the store as the 5th positional argument to `handleToken`; (4)
+  set `DiscoveryMetadataConfig.refresh_token_supported: true`. After
+  this, access tokens drop to 1h and claude.ai refreshes natively.
+- **Per-MCP bumps to v0.3.1 (Oura, Withings, Peloton) happen in their
+  own sessions** — same pattern as v0.3.0 → v0.3.1.
+
 ## [0.3.0] – 2026-04-23
 
 ### Added

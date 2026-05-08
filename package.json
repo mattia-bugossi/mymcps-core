@@ -1,6 +1,6 @@
 {
   "name": "mymcps-core",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Shared core for MyMCPs provider-specific MCP servers (Oura, Withings, …). Auth, transport, cache, AWS utilities.",
   "private": true,
   "type": "module",
