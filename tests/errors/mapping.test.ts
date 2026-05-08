@@ -4,6 +4,8 @@ import {
   AuthError,
   NotFoundError,
   RateLimitError,
+  UpstreamAuthRevoked,
+  UpstreamAuthSeedError,
   UpstreamError,
   ValidationError,
   classifyError,
@@ -41,6 +43,20 @@ describe('classifyError', () => {
   it('maps unknown errors to 500 / -32603', () => {
     assert.equal(classifyError(new Error('??')).statusCode, 500);
     assert.equal(classifyError('string thrown').statusCode, 500);
+  });
+
+  it('maps UpstreamAuthRevoked to 401 with provider-aware re-authorization message (distinct from SeedError)', () => {
+    const c = classifyError(new UpstreamAuthRevoked('peloton', 'rejected', 401));
+    assert.equal(c.statusCode, 401);
+    assert.equal(c.jsonRpcCode, -32000);
+    assert.equal(c.message, 'peloton access revoked — re-authorization required');
+  });
+
+  it('maps UpstreamAuthSeedError to 500 / -32603 (operator config error, NOT user-action-required)', () => {
+    const c = classifyError(new UpstreamAuthSeedError('peloton', 'expires_at in past'));
+    assert.equal(c.statusCode, 500, 'server-side misconfiguration, not user auth');
+    assert.equal(c.jsonRpcCode, -32603);
+    assert.equal(c.message, 'peloton token seed misconfigured — operator must re-seed');
   });
 });
 

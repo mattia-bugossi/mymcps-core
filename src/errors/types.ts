@@ -51,6 +51,24 @@ export class UpstreamAuthRevoked extends Error {
   }
 }
 
+// Thrown by UserPreIssuedAuth when the seeded Secrets Manager value's
+// `expires_at` is at-or-before now at load time — meaning the very
+// first call would force a refresh and risk burning the refresh token
+// if another process (e.g., the SPA still running in another tab) has
+// already rotated it. Sibling to UpstreamAuthRevoked: BOTH are
+// upstream-auth-domain errors, but the remediation differs — Revoked
+// means "user must re-authorize"; SeedError means "operator must
+// re-seed the secret with the actual expiry from the source." Distinct
+// telemetry buckets, distinct runbooks.
+export class UpstreamAuthSeedError extends Error {
+  readonly provider: string;
+  constructor(provider: string, message: string) {
+    super(message);
+    this.name = 'UpstreamAuthSeedError';
+    this.provider = provider;
+  }
+}
+
 export class NotFoundError extends Error {
   constructor(message = 'Not found') {
     super(message);

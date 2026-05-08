@@ -27,7 +27,12 @@
 //   re-reads and uses the winner's tokens, never triggering a second
 //   refresh.
 
-import { AuthError, UpstreamAuthRevoked, UpstreamError } from '../errors/types.js';
+import {
+  AuthError,
+  UpstreamAuthRevoked,
+  UpstreamAuthSeedError,
+  UpstreamError,
+} from '../errors/types.js';
 import type { ProviderAuth } from './ProviderAuth.js';
 import {
   ConcurrentModificationError,
@@ -141,7 +146,19 @@ export function createUserPreIssuedAuth(
         `${config.provider} token seed missing at ${config.secretArn}`,
       );
     }
-    return { secret, record: parseStored(config.provider, secret.value) };
+    const record = parseStored(config.provider, secret.value);
+    // Strict-past check: a seed with expires_at at-or-before now would
+    // force an immediate refresh on first call. If another process
+    // (e.g., the SPA still running in another tab) has already rotated
+    // the token pair upstream, that refresh would burn a refresh token
+    // already consumed by the rotator. Abort before any network call.
+    if (record.expires_at <= now()) {
+      throw new UpstreamAuthSeedError(
+        config.provider,
+        'expires_at is in the past; this would force an immediate refresh on first call and may burn your refresh token if another process has already rotated it. Use the actual expiry from the source.',
+      );
+    }
+    return { secret, record };
   }
 
   async function callRefresh(current: StoredTokenRecord): Promise<StoredTokenRecord> {

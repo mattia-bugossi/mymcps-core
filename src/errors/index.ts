@@ -3,6 +3,7 @@ export {
   NotFoundError,
   RateLimitError,
   UpstreamAuthRevoked,
+  UpstreamAuthSeedError,
   UpstreamError,
   ValidationError,
 } from './types.js';

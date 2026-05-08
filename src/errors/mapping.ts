@@ -6,6 +6,7 @@ import {
   NotFoundError,
   RateLimitError,
   UpstreamAuthRevoked,
+  UpstreamAuthSeedError,
   UpstreamError,
   ValidationError,
 } from './types.js';
@@ -42,6 +43,17 @@ export function classifyError(err: unknown): ErrorClassification {
       statusCode: 401,
       jsonRpcCode: -32000,
       message: `${err.provider} access revoked — re-authorization required`,
+    };
+  }
+  if (err instanceof UpstreamAuthSeedError) {
+    // Operator-config error, NOT a user-action-required auth error.
+    // The user did nothing wrong; the seeded secret is malformed. 500
+    // surfaces this as a server problem so the user isn't told to
+    // re-authorize when the fix is on the operator's side.
+    return {
+      statusCode: 500,
+      jsonRpcCode: -32603,
+      message: `${err.provider} token seed misconfigured — operator must re-seed`,
     };
   }
   if (err instanceof AuthError) {

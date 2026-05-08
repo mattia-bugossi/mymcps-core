@@ -24,6 +24,10 @@ export {
   type PreIssuedAuth,
   type UserPreIssuedAuthConfig,
 } from './UserPreIssuedAuth.js';
+// Re-exported for discoverability — the seed error is specific to the
+// UserPreIssuedAuth pre-seeded-token pattern and naturally belongs
+// next to its thrower in barrel imports.
+export { UpstreamAuthSeedError } from '../errors/types.js';
 export {
   ConcurrentModificationError,
   createVersionedSecretsClient,

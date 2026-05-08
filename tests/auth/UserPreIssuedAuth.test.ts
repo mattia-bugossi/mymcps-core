@@ -1,6 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { AuthError, UpstreamAuthRevoked, UpstreamError } from '../../src/errors/types.js';
+import {
+  AuthError,
+  UpstreamAuthRevoked,
+  UpstreamAuthSeedError,
+  UpstreamError,
+} from '../../src/errors/types.js';
 import {
   createUserPreIssuedAuth,
   type UserPreIssuedAuthConfig,
@@ -248,7 +253,7 @@ describe('createUserPreIssuedAuth — refresh error taxonomy', () => {
     const store = mkStore({
       access_token: 'at-old',
       refresh_token: 'rt-old',
-      expires_at: NOW - 1, // force refresh
+      expires_at: NOW + 30, // within default 60s refreshMargin → forces refresh
     });
     const { fetch: fetchFn } = mkFetch(() =>
       jsonResponse(401, { error: 'invalid_grant' }),
@@ -267,7 +272,7 @@ describe('createUserPreIssuedAuth — refresh error taxonomy', () => {
     const store = mkStore({
       access_token: 'at-old',
       refresh_token: 'rt-old',
-      expires_at: NOW - 1,
+      expires_at: NOW + 30,
     });
     const { fetch: fetchFn } = mkFetch(() =>
       jsonResponse(503, { error: 'unavailable' }),
@@ -288,7 +293,7 @@ describe('createUserPreIssuedAuth — single-flight mutex', () => {
     const store = mkStore({
       access_token: 'at-old',
       refresh_token: 'rt-old',
-      expires_at: NOW - 1,
+      expires_at: NOW + 30,
     });
     let releaseRefresh: (value: Response) => void = () => {};
     const refreshPromise = new Promise<Response>((resolve) => {
@@ -330,7 +335,7 @@ describe('createUserPreIssuedAuth — cross-Lambda CAS (ConcurrentModificationEr
     const store = mkStore({
       access_token: 'at-old',
       refresh_token: 'rt-old',
-      expires_at: NOW - 1,
+      expires_at: NOW + 30,
     });
     // Simulate another Lambda having rotated first: the winning
     // writer's token pair sits at v2.
@@ -412,7 +417,7 @@ describe('createUserPreIssuedAuth — re-reads secret before refresh (external r
     const store = mkStore({
       access_token: 'at-stale',
       refresh_token: 'rt-stale',
-      expires_at: NOW - 1, // forces refresh path
+      expires_at: NOW + 30, // within default 60s refreshMargin → forces refresh
     });
     store.onGet = (callIndex) => {
       if (callIndex === 0) {
@@ -451,7 +456,7 @@ describe('createUserPreIssuedAuth — re-reads secret before refresh (external r
     const store = mkStore({
       access_token: 'at-stale',
       refresh_token: 'rt-stale',
-      expires_at: NOW - 1,
+      expires_at: NOW + 30,
     });
     store.onGet = (callIndex) => {
       // The single doRefresh re-read happens after the 3 loadCurrent
@@ -507,6 +512,70 @@ describe('createUserPreIssuedAuth — re-reads secret before refresh (external r
     // Only the loadCurrent read; no refresh path entered, no re-read.
     assert.equal(store.getCalls, 1);
     assert.equal(store.putCalls, 0);
+  });
+});
+
+describe('createUserPreIssuedAuth — UpstreamAuthSeedError on stale expires_at at load', () => {
+  it('throws UpstreamAuthSeedError on expires_at: 0 — and does NOT trigger any refresh', async () => {
+    const store = mkStore({
+      access_token: 'at-seed',
+      refresh_token: 'rt-seed',
+      expires_at: 0,
+    });
+    let refreshCalls = 0;
+    const { fetch: fetchFn } = mkFetch(() => {
+      refreshCalls++;
+      return jsonResponse(200, { access_token: 'unused', expires_in: 3600 });
+    });
+
+    const auth = createUserPreIssuedAuth(mkConfig({ secretsClient: store, fetchFn }));
+    await assert.rejects(
+      () => auth.getAccessToken('single-user'),
+      (err: unknown) =>
+        err instanceof UpstreamAuthSeedError &&
+        err.provider === 'peloton' &&
+        /expires_at is in the past/.test(err.message),
+    );
+    assert.equal(refreshCalls, 0, 'refresh path NOT triggered when seed error fires');
+    assert.equal(store.putCalls, 0);
+  });
+
+  it('throws UpstreamAuthSeedError on expires_at one second in the past — same no-refresh guarantee', async () => {
+    const store = mkStore({
+      access_token: 'at-seed',
+      refresh_token: 'rt-seed',
+      expires_at: NOW - 1,
+    });
+    let refreshCalls = 0;
+    const { fetch: fetchFn } = mkFetch(() => {
+      refreshCalls++;
+      return jsonResponse(200, { access_token: 'unused', expires_in: 3600 });
+    });
+
+    const auth = createUserPreIssuedAuth(mkConfig({ secretsClient: store, fetchFn }));
+    await assert.rejects(
+      () => auth.getAccessToken('single-user'),
+      (err: unknown) => err instanceof UpstreamAuthSeedError,
+    );
+    assert.equal(refreshCalls, 0);
+  });
+
+  it('does NOT throw on expires_at exactly one second in the future (strict-past threshold)', async () => {
+    // refreshMargin = 0 to avoid triggering a proactive refresh — we
+    // only want to assert the seed check passes; what happens
+    // afterward (route to cached token) is secondary.
+    const store = mkStore({
+      access_token: 'at-seed',
+      refresh_token: 'rt-seed',
+      expires_at: NOW + 1,
+    });
+    const { fetch: fetchFn } = mkFetch(() => jsonResponse(500, 'unused'));
+
+    const auth = createUserPreIssuedAuth(
+      mkConfig({ secretsClient: store, fetchFn, refreshMargin: 0 }),
+    );
+    const token = await auth.getAccessToken('single-user');
+    assert.equal(token, 'at-seed');
   });
 });
 
