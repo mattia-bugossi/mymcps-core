@@ -20,6 +20,10 @@ export {
   type RegisteredClient,
   type RegisteredClientMetadata,
 } from './client-registry.js';
+export type {
+  IssuedRefreshTokenRecord,
+  IssuedRefreshTokenStore,
+} from './issued-refresh-token-store.js';
 export {
   makeAuthorizer,
   type AuthorizerConfig,
