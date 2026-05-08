@@ -194,28 +194,50 @@ export function createUserPreIssuedAuth(
   }
 
   async function doRefresh(current: VersionedSecret): Promise<VersionedSecret> {
-    const record = parseStored(config.provider, current.value);
-    const rotated = await callRefresh(record);
+    const cachedRecord = parseStored(config.provider, current.value);
+
+    // Re-read the secret immediately before refreshing. Catches manual
+    // `put-secret-value` rotations (operator runbook) and same-Lambda
+    // races where another path already rotated — without this, warm
+    // instances would hold stale token pairs in module-scope memory
+    // until cold start. Compare on access_token: the unambiguous
+    // "did the secret change" signal (refresh_token may or may not
+    // rotate; expires_at can drift from clock skew).
+    const fresh = await config.secretsClient.get(config.secretArn);
+    if (!fresh) {
+      throw new AuthError(
+        `${config.provider} token seed missing at ${config.secretArn}`,
+      );
+    }
+    const freshRecord = parseStored(config.provider, fresh.value);
+    if (freshRecord.access_token !== cachedRecord.access_token) {
+      // Externally rotated. Skip the upstream POST (which would burn a
+      // refresh token already consumed by the rotator) and surface the
+      // fresh pair to the caller.
+      return fresh;
+    }
+
+    const rotated = await callRefresh(cachedRecord);
     const newValue = JSON.stringify(rotated);
     try {
       const newVersionId = await config.secretsClient.put(
         config.secretArn,
         newValue,
-        current.versionId,
+        fresh.versionId,
       );
       return { value: newValue, versionId: newVersionId };
     } catch (err) {
       if (err instanceof ConcurrentModificationError) {
-        // Another Lambda rotated the secret between our get and put.
-        // Re-read and use the winner's access_token rather than
+        // Another Lambda rotated the secret between our re-read and
+        // put. Re-read and use the winner's access_token rather than
         // refreshing again.
-        const fresh = await config.secretsClient.get(config.secretArn);
-        if (!fresh) {
+        const winner = await config.secretsClient.get(config.secretArn);
+        if (!winner) {
           throw new AuthError(
             `${config.provider} token seed disappeared during concurrent refresh`,
           );
         }
-        return fresh;
+        return winner;
       }
       throw err;
     }

@@ -23,6 +23,12 @@ interface StoredRec {
 interface FakeStore extends VersionedSecretsClient {
   stored: { value: string; versionId: string } | null;
   putCalls: number;
+  getCalls: number;
+  // Fires after each successful get(), AFTER the value has been
+  // captured for return. Tests use this to mutate `stored` between
+  // gets, simulating an external rotation that lands between the
+  // caller's loadCurrent read and doRefresh's re-read.
+  onGet?: (callIndex: number) => void;
   // Force the next put() to fail with ConcurrentModificationError, then
   // set `stored` to the winner's value so the caller's re-read picks it up.
   failNextPutWith(
@@ -46,11 +52,16 @@ function mkStore(initial: StoredRec, versionId = 'v1'): FakeStore {
       stored = v;
     },
     putCalls: 0,
+    getCalls: 0,
+    onGet: undefined,
     failNextPutWith(winner) {
       queuedWinner = winner;
     },
     async get() {
-      return stored ? { value: stored.value, versionId: stored.versionId } : null;
+      const callIndex = store.getCalls++;
+      const snapshot = stored ? { value: stored.value, versionId: stored.versionId } : null;
+      if (store.onGet) store.onGet(callIndex);
+      return snapshot;
     },
     async put(_arn, value, expectedVersionId) {
       store.putCalls++;
@@ -387,6 +398,115 @@ describe('createUserPreIssuedAuth — malformed stored secret', () => {
       () => auth.getAccessToken('single-user'),
       (err: unknown) => err instanceof AuthError && /missing expires_at/.test(err.message),
     );
+  });
+});
+
+describe('createUserPreIssuedAuth — re-reads secret before refresh (external rotation)', () => {
+  it('skips the upstream POST when the secret has been externally rotated since loadCurrent read it', async () => {
+    // Setup: stored value is stale (expired access_token). An external
+    // rotator (operator put-secret-value, or the SPA in another tab)
+    // lands a fresh pair between loadCurrent's read and doRefresh's
+    // re-read. Simulated via onGet: after the first get (loadCurrent),
+    // mutate `stored` so the second get (doRefresh re-read) returns
+    // the rotator's fresh value.
+    const store = mkStore({
+      access_token: 'at-stale',
+      refresh_token: 'rt-stale',
+      expires_at: NOW - 1, // forces refresh path
+    });
+    store.onGet = (callIndex) => {
+      if (callIndex === 0) {
+        store.stored = {
+          value: JSON.stringify({
+            access_token: 'at-fresh-from-rotator',
+            refresh_token: 'rt-fresh-from-rotator',
+            expires_at: NOW + 3600,
+          }),
+          versionId: 'v-rotator',
+        };
+      }
+    };
+
+    let refreshCalls = 0;
+    const { fetch: fetchFn } = mkFetch(() => {
+      refreshCalls++;
+      return jsonResponse(200, {
+        access_token: 'at-from-our-refresh',
+        refresh_token: 'rt-from-our-refresh',
+        expires_in: 3600,
+      });
+    });
+
+    const auth = createUserPreIssuedAuth(mkConfig({ secretsClient: store, fetchFn }));
+    const token = await auth.getAccessToken('single-user');
+
+    assert.equal(token, 'at-fresh-from-rotator', 'caller receives the rotator\'s token');
+    assert.equal(refreshCalls, 0, 'no upstream /oauth/token POST — refresh skipped');
+    assert.equal(store.putCalls, 0, 'no put — we did not refresh');
+    // 2 gets: 1 loadCurrent + 1 doRefresh re-read.
+    assert.equal(store.getCalls, 2);
+  });
+
+  it('combined with single-flight: 3 concurrent callers + external rotation → 1 doRefresh re-read, 0 refresh calls', async () => {
+    const store = mkStore({
+      access_token: 'at-stale',
+      refresh_token: 'rt-stale',
+      expires_at: NOW - 1,
+    });
+    store.onGet = (callIndex) => {
+      // The single doRefresh re-read happens after the 3 loadCurrent
+      // reads — at callIndex === 3.
+      if (callIndex === 2) {
+        store.stored = {
+          value: JSON.stringify({
+            access_token: 'at-fresh-from-rotator',
+            refresh_token: 'rt-fresh-from-rotator',
+            expires_at: NOW + 3600,
+          }),
+          versionId: 'v-rotator',
+        };
+      }
+    };
+
+    let refreshCalls = 0;
+    const { fetch: fetchFn } = mkFetch(() => {
+      refreshCalls++;
+      return jsonResponse(200, {
+        access_token: 'at-unused',
+        refresh_token: 'rt-unused',
+        expires_in: 3600,
+      });
+    });
+
+    const auth = createUserPreIssuedAuth(mkConfig({ secretsClient: store, fetchFn }));
+    const [a, b, c] = await Promise.all([
+      auth.getAccessToken('single-user'),
+      auth.getAccessToken('single-user'),
+      auth.getAccessToken('single-user'),
+    ]);
+    assert.equal(a, 'at-fresh-from-rotator');
+    assert.equal(b, 'at-fresh-from-rotator');
+    assert.equal(c, 'at-fresh-from-rotator');
+    assert.equal(refreshCalls, 0, 'single-flight + re-read-skip → no upstream POST at all');
+    assert.equal(store.putCalls, 0);
+    // 3 loadCurrent + 1 single-flighted doRefresh re-read = 4 gets.
+    assert.equal(store.getCalls, 4);
+  });
+
+  it('routine call with fresh in-memory access token does not trigger the doRefresh re-read', async () => {
+    const store = mkStore({
+      access_token: 'at-fresh',
+      refresh_token: 'rt-fresh',
+      expires_at: NOW + 3600, // far past refreshMargin
+    });
+    const { fetch: fetchFn } = mkFetch(() => jsonResponse(500, 'unused'));
+
+    const auth = createUserPreIssuedAuth(mkConfig({ secretsClient: store, fetchFn }));
+    const token = await auth.getAccessToken('single-user');
+    assert.equal(token, 'at-fresh');
+    // Only the loadCurrent read; no refresh path entered, no re-read.
+    assert.equal(store.getCalls, 1);
+    assert.equal(store.putCalls, 0);
   });
 });
 
